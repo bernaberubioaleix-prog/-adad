@@ -1,0 +1,119 @@
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diario del Cazador</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="sigil">✦</div>
+      <div>
+        <p class="eyebrow">ARCHIVO DE HALLOWNEST</p>
+        <h1>Diario del Cazador</h1>
+      </div>
+      <button id="logoutBtn" class="ghost hidden">Cerrar sesión</button>
+    </header>
+
+    <section id="loginView" class="login-card">
+      <p class="eyebrow">REGISTRO PRIVADO</p>
+      <h2>Abre tu diario</h2>
+      <p class="muted">Este archivo solo está disponible para su dueño.</p>
+      <form id="loginForm">
+        <label>Correo electrónico
+          <input id="email" type="email" autocomplete="username" required>
+        </label>
+        <label>Contraseña
+          <input id="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="primary" type="submit">Entrar al diario</button>
+        <p id="loginMessage" class="message"></p>
+      </form>
+    </section>
+
+    <section id="appView" class="hidden">
+      <div class="intro">
+        <div>
+          <p class="eyebrow">BESTIARIO Y CRÓNICA DE COMBATE</p>
+          <h2>Tu registro de cazador</h2>
+          <p class="muted">Anota encuentros, rivales y grandes victorias.</p>
+        </div>
+        <button id="addBtn" class="primary">＋ Añadir entrada</button>
+      </div>
+
+      <div class="stats">
+        <article><span>ENTRADAS</span><strong id="totalStat">0</strong></article>
+        <article><span>VICTORIAS</span><strong id="winsStat">0</strong></article>
+        <article><span>DERROTAS</span><strong id="lossesStat">0</strong></article>
+        <article><span>COMBATES</span><strong id="matchesStat">0</strong></article>
+      </div>
+
+      <div class="toolbar">
+        <input id="searchInput" type="search" placeholder="Buscar en el diario…">
+        <select id="filterSelect">
+          <option value="all">Todos los registros</option>
+          <option value="creature">Criaturas</option>
+          <option value="boss">Jefes</option>
+        </select>
+      </div>
+
+      <p id="statusMessage" class="message"></p>
+      <div id="entriesGrid" class="entries-grid"></div>
+      <div id="emptyState" class="empty hidden">
+        <span>✧</span>
+        <h3>El diario aún está vacío</h3>
+        <p>Añade tu primer encuentro para comenzar.</p>
+      </div>
+    </section>
+
+    <footer>UN REGISTRO DE ENCUENTROS · SOLO PARA EL CAZADOR</footer>
+  </main>
+
+  <dialog id="entryDialog">
+    <form id="entryForm" class="entry-form">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">NUEVO REGISTRO</p>
+          <h2 id="dialogTitle">Añadir entrada</h2>
+        </div>
+        <button type="button" id="closeDialog" class="close">×</button>
+      </div>
+
+      <label>Nombre
+        <input id="entryName" maxlength="80" required placeholder="Nombre de la criatura o rival">
+      </label>
+      <label>Descripción
+        <textarea id="entryDescription" rows="3" placeholder="Notas del encuentro…"></textarea>
+      </label>
+      <label>Aspecto / skin
+        <input id="entryImage" type="file" accept="image/*">
+        <small>Imagen opcional. Se guardará en tu espacio privado.</small>
+      </label>
+      <label class="checkline">
+        <input id="entryBoss" type="checkbox"> Es un jefe
+      </label>
+
+      <div class="number-grid">
+        <label>Victorias
+          <input id="entryWins" type="number" min="0" step="1" value="0" required>
+        </label>
+        <label>Derrotas
+          <input id="entryLosses" type="number" min="0" step="1" value="0" required>
+        </label>
+      </div>
+
+      <p id="formMessage" class="message"></p>
+      <div class="dialog-actions">
+        <button type="button" id="cancelBtn" class="ghost">Cancelar</button>
+        <button id="saveBtn" class="primary" type="submit">Guardar entrada</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
