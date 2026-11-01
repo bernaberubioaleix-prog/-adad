@@ -11,6 +11,7 @@
   let user;
   let entries = [];
   let editingId = null;
+  let isAdmin = false;
 
   function message(id, text, error = false) {
     const el = $(id);
@@ -20,6 +21,7 @@
 
   function showLogin() {
     user = null;
+    entries = [];
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
     $('logoutBtn').classList.add('hidden');
@@ -27,9 +29,57 @@
 
   async function enterApp(currentUser) {
     user = currentUser;
+
     loginView.classList.add('hidden');
     appView.classList.remove('hidden');
     $('logoutBtn').classList.remove('hidden');
+
+    message('statusMessage', 'Comprobando permisos…');
+
+    const { data: ownerRows, error: ownerError } = await db
+      .from('hunter_entry_editors')
+      .select('id')
+      .eq('owner_id', user.id)
+      .limit(1);
+
+    const { data: editorRows, error: editorError } = await db
+      .from('hunter_entry_editors')
+      .select('id')
+      .eq('editor_id', user.id)
+      .limit(1);
+
+    if (ownerError || editorError) {
+      message(
+        'statusMessage',
+        'No se pudieron comprobar los permisos.',
+        true
+      );
+      return;
+    }
+
+    isAdmin = !!(ownerRows && ownerRows.length);
+
+    if (!isAdmin && !(editorRows && editorRows.length)) {
+      message('statusMessage', 'Esta cuenta no tiene acceso al diario.', true);
+      return;
+    }
+
+    $('addBtn').classList.toggle('hidden', !isAdmin);
+
+    const heading = appView.querySelector('.intro h2');
+    if (heading) {
+      heading.textContent = isAdmin
+        ? 'Tu registro de cazador'
+        : 'Registro de combate';
+    }
+
+    const subtitle = appView.querySelector('.intro .muted');
+    if (subtitle) {
+      subtitle.textContent = isAdmin
+        ? 'Administra criaturas, jefes y estadísticas.'
+        : 'Consulta las criaturas y actualiza tus estadísticas.';
+    }
+
     await loadEntries();
   }
 
@@ -161,22 +211,31 @@
       const record = document.createElement('p');
       record.className = 'record';
       record.textContent =
-        `Victorias: ${item.wins} · Derrotas: ${item.losses} · Combates: ${item.wins + item.losses}`;
+        `Victorias: ${item.wins} · Derrotas: ${item.losses} · Partidas: ${item.matches ?? 0}`;
 
       const actions = document.createElement('div');
       actions.className = 'card-actions';
 
-      const edit = document.createElement('button');
-      edit.className = 'ghost';
-      edit.textContent = 'Editar';
-      edit.addEventListener('click', () => openEdit(item));
+      if (isAdmin) {
+        const edit = document.createElement('button');
+        edit.className = 'ghost';
+        edit.textContent = 'Editar';
+        edit.addEventListener('click', () => openEdit(item));
 
-      const remove = document.createElement('button');
-      remove.className = 'ghost';
-      remove.textContent = 'Eliminar';
-      remove.addEventListener('click', () => deleteEntry(item));
+        const remove = document.createElement('button');
+        remove.className = 'ghost';
+        remove.textContent = 'Eliminar';
+        remove.addEventListener('click', () => deleteEntry(item));
 
-      actions.append(edit, remove);
+        actions.append(edit, remove);
+      } else {
+        const update = document.createElement('button');
+        update.className = 'primary';
+        update.textContent = 'Actualizar estadísticas';
+        update.addEventListener('click', () => updateStats(item));
+        actions.append(update);
+      }
+
       content.append(tag, title, description, record, actions);
       card.append(image, content);
       grid.append(card);
@@ -186,17 +245,59 @@
 
     $('totalStat').textContent = entries.length;
     $('winsStat').textContent =
-      entries.reduce((sum, item) => sum + item.wins, 0);
+      entries.reduce((sum, item) => sum + Number(item.wins || 0), 0);
     $('lossesStat').textContent =
-      entries.reduce((sum, item) => sum + item.losses, 0);
+      entries.reduce((sum, item) => sum + Number(item.losses || 0), 0);
     $('matchesStat').textContent =
-      entries.reduce((sum, item) => sum + item.wins + item.losses, 0);
+      entries.reduce((sum, item) => sum + Number(item.matches || 0), 0);
+  }
+
+  async function updateStats(item) {
+    const winsInput = prompt('Victorias:', item.wins);
+    if (winsInput === null) return;
+
+    const lossesInput = prompt('Derrotas:', item.losses);
+    if (lossesInput === null) return;
+
+    const matchesInput = prompt('Partidas:', item.matches ?? 0);
+    if (matchesInput === null) return;
+
+    const wins = Number(winsInput);
+    const losses = Number(lossesInput);
+    const matches = Number(matchesInput);
+
+    const valid = [wins, losses, matches].every(
+      value => Number.isSafeInteger(value) && value >= 0
+    );
+
+    if (!valid) {
+      alert('Introduce números enteros iguales o superiores a cero.');
+      return;
+    }
+
+    message('statusMessage', 'Guardando estadísticas…');
+
+    const { error } = await db.rpc('update_hunter_entry_stats', {
+      p_entry_id: item.id,
+      p_wins: wins,
+      p_losses: losses,
+      p_matches: matches
+    });
+
+    if (error) {
+      message('statusMessage', 'Error: ' + error.message, true);
+      return;
+    }
+
+    await loadEntries();
+    message('statusMessage', 'Estadísticas actualizadas correctamente.');
   }
 
   function resetForm() {
     $('entryForm').reset();
     $('entryWins').value = 0;
     $('entryLosses').value = 0;
+    $('entryMatches').value = 0;
     $('entryImage').value = '';
     editingId = null;
     $('dialogTitle').textContent = 'Añadir entrada';
@@ -205,6 +306,8 @@
   }
 
   function openEdit(item) {
+    if (!isAdmin) return;
+
     resetForm();
     editingId = item.id;
     $('dialogTitle').textContent = 'Editar entrada';
@@ -214,10 +317,12 @@
     $('entryBoss').checked = item.is_boss;
     $('entryWins').value = item.wins;
     $('entryLosses').value = item.losses;
+    $('entryMatches').value = item.matches ?? 0;
     dialog.showModal();
   }
 
   $('addBtn').addEventListener('click', () => {
+    if (!isAdmin) return;
     resetForm();
     dialog.showModal();
   });
@@ -229,6 +334,9 @@
 
   $('entryForm').addEventListener('submit', async event => {
     event.preventDefault();
+
+    if (!isAdmin) return;
+
     $('saveBtn').disabled = true;
     message('formMessage', 'Guardando…');
 
@@ -238,8 +346,16 @@
         description: $('entryDescription').value.trim(),
         is_boss: $('entryBoss').checked,
         wins: Number($('entryWins').value),
-        losses: Number($('entryLosses').value)
+        losses: Number($('entryLosses').value),
+        matches: Number($('entryMatches').value)
       };
+
+      if (!Object.values(payload).every((value, index) =>
+        index < 2 || typeof value === 'boolean' ||
+        (Number.isSafeInteger(value) && value >= 0)
+      )) {
+        throw new Error('Comprueba los números introducidos.');
+      }
 
       const file = $('entryImage').files[0];
 
@@ -285,11 +401,8 @@
   });
 
   async function deleteEntry(item) {
+    if (!isAdmin) return;
     if (!confirm(`¿Eliminar "${item.name}" del diario?`)) return;
-
-    if (item.image_url) {
-      await db.storage.from(bucket).remove([item.image_url]);
-    }
 
     const { error } = await db
       .from('hunter_entries')
@@ -299,6 +412,9 @@
     if (error) {
       message('statusMessage', error.message, true);
     } else {
+      if (item.image_url) {
+        await db.storage.from(bucket).remove([item.image_url]);
+      }
       await loadEntries();
     }
   }
