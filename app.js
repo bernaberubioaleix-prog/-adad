@@ -284,7 +284,7 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
         .toUpperCase();
 
       const matchesRank =
-        rankFilter === 'all' || itemRank === rankFilter;
+  showAllRanks || itemRank === rankFilter;
 
       return matchesText && matchesType && matchesRank;
     });
