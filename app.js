@@ -79,7 +79,27 @@
         ? 'Administra criaturas, jefes y estadísticas.'
         : 'Consulta las criaturas y actualiza tus estadísticas.';
     }
+async function loadPlayerRank() {
+  const { data, error } = await db
+    .from('hunter_player_ratings')
+    .select('elo, rank')
+    .eq('user_id', user.id)
+    .maybeSingle();
 
+  if (error) {
+    message('statusMessage', 'No se pudo cargar el rango.', true);
+    return;
+  }
+
+  if (!data) {
+    $('playerRank').textContent = 'HT5';
+    $('playerElo').textContent = '1000';
+    return;
+  }
+
+  $('playerRank').textContent = data.rank;
+  $('playerElo').textContent = data.elo;
+}
     await loadEntries();
   }
 
@@ -129,7 +149,7 @@
     db.auth.signOut();
   });
 
-  async function loadEntries() {
+  async function loadEntries(await loadPlayerRank();) {
     message('statusMessage', 'Cargando el diario…');
 
     const { data, error } = await db
