@@ -18,6 +18,8 @@
   let editingId = null;
   let isAdmin = false;
   let isEditor = false;
+  let historyDialog;
+  let historyButton;
 
   function message(id, text, error = false) {
     const el = $(id);
@@ -35,6 +37,66 @@
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
     $('logoutBtn').classList.add('hidden');
+
+    if (historyDialog?.open) historyDialog.close();
+  }
+
+  function createHistoryInterface() {
+    if (historyDialog) return;
+
+    historyButton = document.createElement('button');
+    historyButton.type = 'button';
+    historyButton.className = 'primary';
+    historyButton.textContent = '📜 Historial de combates';
+    historyButton.classList.add('hidden');
+
+    const intro = appView.querySelector('.intro');
+
+    if (intro) {
+      intro.appendChild(historyButton);
+    } else {
+      appView.insertBefore(historyButton, $('entriesGrid'));
+    }
+
+    historyDialog = document.createElement('dialog');
+    historyDialog.id = 'matchHistoryDialog';
+
+    historyDialog.style.cssText = `
+      width: min(650px, 92vw);
+      max-height: 85vh;
+      overflow-y: auto;
+      border: 1px solid #66534b;
+      border-radius: 14px;
+      padding: 22px;
+      background: #211c1b;
+      color: #f3e8df;
+    `;
+
+    const heading = document.createElement('h2');
+    heading.textContent = 'Historial de combates';
+
+    const explanation = document.createElement('p');
+    explanation.textContent =
+      'Puedes corregir el resultado o eliminar un combate registrado por error.';
+    explanation.style.cssText = 'opacity:.75; line-height:1.5;';
+
+    const list = document.createElement('div');
+    list.id = 'matchHistoryList';
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'ghost';
+    close.textContent = 'Cerrar';
+    close.style.marginTop = '16px';
+    close.addEventListener('click', () => historyDialog.close());
+
+    historyDialog.append(heading, explanation, list, close);
+    document.body.appendChild(historyDialog);
+
+    historyButton.addEventListener('click', async () => {
+      historyDialog.showModal();
+      await loadMatchHistory();
+    });
   }
 
   async function loadPlayerRank() {
@@ -89,9 +151,13 @@
       return;
     }
 
+    createHistoryInterface();
+
     $('addBtn').classList.toggle('hidden', !isAdmin);
+    historyButton.classList.toggle('hidden', !isEditor || isAdmin);
 
     const heading = appView.querySelector('.intro h2');
+
     if (heading) {
       heading.textContent = isAdmin
         ? 'Tu registro de cazador'
@@ -99,6 +165,7 @@
     }
 
     const subtitle = appView.querySelector('.intro .muted');
+
     if (subtitle) {
       subtitle.textContent = isAdmin
         ? 'Administra criaturas, jefes y rangos de rivales.'
@@ -197,13 +264,13 @@
   }
 
   async function renderEntries() {
-    const query = $('searchInput').value.toLowerCase();
+    const query = $('searchInput').value.trim().toLowerCase();
     const filter = $('filterSelect').value;
-    const rankFilter = $('rankFilter').value;
+    const rankFilter = $('rankFilter').value.trim().toUpperCase();
 
     const filtered = entries.filter(item => {
       const matchesText =
-        (item.name + ' ' + (item.description || ''))
+        (String(item.name || '') + ' ' + String(item.description || ''))
           .toLowerCase()
           .includes(query);
 
@@ -211,9 +278,12 @@
         filter === 'all' ||
         (filter === 'boss' ? item.is_boss : !item.is_boss);
 
+      const itemRank = String(item.opponent_rank || 'LT5')
+        .trim()
+        .toUpperCase();
+
       const matchesRank =
-        rankFilter === 'all' ||
-        (item.opponent_rank || 'LT5') === rankFilter;
+        rankFilter === 'all' || itemRank === rankFilter;
 
       return matchesText && matchesType && matchesRank;
     });
@@ -355,6 +425,128 @@
       message('statusMessage', 'No se pudo registrar el combate: ' + error.message, true);
       buttons.forEach(btn => btn.disabled = false);
     }
+  }
+
+  async function loadMatchHistory() {
+    if (!user || !isEditor || isAdmin) return;
+
+    const list = $('matchHistoryList');
+    list.innerHTML = 'Cargando historial…';
+
+    const { data, error } = await db
+      .from('hunter_match_history')
+      .select('id, entry_id, result, opponent_rank, created_at')
+      .eq('player_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      list.textContent = 'No se pudo cargar el historial: ' + error.message;
+      return;
+    }
+
+    list.innerHTML = '';
+
+    if (!data || data.length === 0) {
+      list.textContent = 'Todavía no tienes combates registrados.';
+      return;
+    }
+
+    for (const match of data) {
+      const entry = entries.find(item => item.id === match.entry_id);
+      const creatureName = entry ? entry.name : 'Criatura eliminada';
+
+      const row = document.createElement('article');
+      row.style.cssText = `
+        border: 1px solid #66534b;
+        border-radius: 10px;
+        padding: 14px;
+        margin: 12px 0;
+      `;
+
+      const title = document.createElement('h3');
+      title.textContent = creatureName;
+      title.style.margin = '0 0 8px';
+
+      const result = document.createElement('p');
+      result.textContent =
+        `Resultado: ${match.result === 'win' ? '✓ Victoria' : '✕ Derrota'}`;
+      result.style.fontWeight = 'bold';
+
+      const details = document.createElement('p');
+      details.style.cssText = 'opacity:.75; font-size:.9em;';
+
+      const date = new Date(match.created_at);
+      details.textContent =
+        `Rival: ${match.opponent_rank} · ${date.toLocaleString('es-ES')}`;
+
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+
+      const correct = document.createElement('button');
+      correct.className = 'primary';
+      correct.textContent = match.result === 'win'
+        ? 'Cambiar a derrota'
+        : 'Cambiar a victoria';
+
+      correct.addEventListener('click', () => {
+        const newResult = match.result === 'win' ? 'loss' : 'win';
+        correctMatch(match, newResult);
+      });
+
+      const remove = document.createElement('button');
+      remove.className = 'ghost';
+      remove.textContent = 'Eliminar combate';
+      remove.addEventListener('click', () => deleteMatch(match));
+
+      actions.append(correct, remove);
+      row.append(title, result, details, actions);
+      list.append(row);
+    }
+  }
+
+  async function correctMatch(match, newResult) {
+    const newName = newResult === 'win' ? 'VICTORIA' : 'DERROTA';
+
+    if (!confirm(`¿Quieres cambiar este combate a ${newName}?`)) return;
+
+    message('statusMessage', 'Corrigiendo combate y recalculando ELO…');
+
+    const { error } = await db.rpc('correct_hunter_match', {
+      p_match_id: match.id,
+      p_new_result: newResult
+    });
+
+    if (error) {
+      message('statusMessage', 'No se pudo corregir: ' + error.message, true);
+      return;
+    }
+
+    await loadEntries();
+    await loadMatchHistory();
+
+    message('statusMessage', '¡Resultado corregido! Estadísticas y ELO actualizados.');
+  }
+
+  async function deleteMatch(match) {
+    if (!confirm(
+      '¿Seguro que quieres eliminar este combate? Se descontará de tus estadísticas y se recalculará tu ELO.'
+    )) return;
+
+    message('statusMessage', 'Eliminando combate y recalculando ELO…');
+
+    const { error } = await db.rpc('delete_hunter_match', {
+      p_match_id: match.id
+    });
+
+    if (error) {
+      message('statusMessage', 'No se pudo eliminar: ' + error.message, true);
+      return;
+    }
+
+    await loadEntries();
+    await loadMatchHistory();
+
+    message('statusMessage', '¡Combate eliminado! Estadísticas y ELO actualizados.');
   }
 
   function resetForm() {
