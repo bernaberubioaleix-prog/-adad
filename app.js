@@ -15,6 +15,7 @@
 
   function message(id, text, error = false) {
     const el = $(id);
+    if (!el) return;
     el.textContent = text;
     el.style.color = error ? '#e08b7d' : '';
   }
@@ -22,9 +23,28 @@
   function showLogin() {
     user = null;
     entries = [];
+    isAdmin = false;
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
     $('logoutBtn').classList.add('hidden');
+  }
+
+  async function loadPlayerRank() {
+    if (!$('playerRank') || !$('playerElo')) return;
+
+    const { data, error } = await db
+      .from('hunter_player_ratings')
+      .select('elo, rank')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      message('statusMessage', 'No se pudo cargar el rango: ' + error.message, true);
+      return;
+    }
+
+    $('playerRank').textContent = data ? data.rank : 'HT5';
+    $('playerElo').textContent = data ? data.elo : '1000';
   }
 
   async function enterApp(currentUser) {
@@ -49,11 +69,7 @@
       .limit(1);
 
     if (ownerError || editorError) {
-      message(
-        'statusMessage',
-        'No se pudieron comprobar los permisos.',
-        true
-      );
+      message('statusMessage', 'No se pudieron comprobar los permisos.', true);
       return;
     }
 
@@ -79,27 +95,7 @@
         ? 'Administra criaturas, jefes y estadísticas.'
         : 'Consulta las criaturas y actualiza tus estadísticas.';
     }
-async function loadPlayerRank() {
-  const { data, error } = await db
-    .from('hunter_player_ratings')
-    .select('elo, rank')
-    .eq('user_id', user.id)
-    .maybeSingle();
 
-  if (error) {
-    message('statusMessage', 'No se pudo cargar el rango.', true);
-    return;
-  }
-
-  if (!data) {
-    $('playerRank').textContent = 'HT5';
-    $('playerElo').textContent = '1000';
-    return;
-  }
-
-  $('playerRank').textContent = data.rank;
-  $('playerElo').textContent = data.elo;
-}
     await loadEntries();
   }
 
@@ -149,7 +145,7 @@ async function loadPlayerRank() {
     db.auth.signOut();
   });
 
-  async function loadEntries(await loadPlayerRank();) {
+  async function loadEntries() {
     message('statusMessage', 'Cargando el diario…');
 
     const { data, error } = await db
@@ -164,7 +160,9 @@ async function loadPlayerRank() {
 
     entries = data || [];
     await renderEntries();
+
     message('statusMessage', '');
+    await loadPlayerRank();
   }
 
   async function getImageUrl(path) {
@@ -228,6 +226,10 @@ async function loadPlayerRank() {
       description.className = 'description';
       description.textContent = item.description || 'Sin descripción.';
 
+      const opponentRank = document.createElement('p');
+      opponentRank.className = 'record';
+      opponentRank.textContent = 'Rango del rival: ' + (item.opponent_rank || 'LT5');
+
       const record = document.createElement('p');
       record.className = 'record';
       record.textContent =
@@ -256,7 +258,7 @@ async function loadPlayerRank() {
         actions.append(update);
       }
 
-      content.append(tag, title, description, record, actions);
+      content.append(tag, title, description, opponentRank, record, actions);
       card.append(image, content);
       grid.append(card);
     }
@@ -273,6 +275,8 @@ async function loadPlayerRank() {
   }
 
   async function updateStats(item) {
+    if (isAdmin) return;
+
     const winsInput = prompt('Victorias:', item.wins);
     if (winsInput === null) return;
 
@@ -310,7 +314,7 @@ async function loadPlayerRank() {
     }
 
     await loadEntries();
-    message('statusMessage', 'Estadísticas actualizadas correctamente.');
+    message('statusMessage', 'Estadísticas y rango actualizados correctamente.');
   }
 
   function resetForm() {
@@ -364,21 +368,26 @@ async function loadPlayerRank() {
 
     try {
       const payload = {
-  name: $('entryName').value.trim(),
-  description: $('entryDescription').value.trim(),
-  opponent_rank: $('entryRank').value,
         name: $('entryName').value.trim(),
         description: $('entryDescription').value.trim(),
+        opponent_rank: $('entryRank').value,
         is_boss: $('entryBoss').checked,
         wins: Number($('entryWins').value),
         losses: Number($('entryLosses').value),
         matches: Number($('entryMatches').value)
       };
 
-      if (!Object.values(payload).every((value, index) =>
-        index < 2 || typeof value === 'boolean' ||
-        (Number.isSafeInteger(value) && value >= 0)
-      )) {
+      const validStats = [
+        payload.wins,
+        payload.losses,
+        payload.matches
+      ].every(value => Number.isSafeInteger(value) && value >= 0);
+
+      if (!payload.name) {
+        throw new Error('Escribe un nombre.');
+      }
+
+      if (!validStats) {
         throw new Error('Comprueba los números introducidos.');
       }
 
