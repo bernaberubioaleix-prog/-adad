@@ -266,7 +266,8 @@
   async function renderEntries() {
     const query = $('searchInput').value.trim().toLowerCase();
     const filter = $('filterSelect').value;
-    const rankFilter = $('rankFilter').value.trim().toUpperCase();
+   const rankFilter = $('rankFilter').value.trim().toUpperCase();
+const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
 
     const filtered = entries.filter(item => {
       const matchesText =
