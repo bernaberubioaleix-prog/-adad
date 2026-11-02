@@ -15,6 +15,7 @@
   let db;
   let user;
   let entries = [];
+  let playerStats = [];
   let editingId = null;
   let isAdmin = false;
   let isEditor = false;
@@ -31,6 +32,7 @@
   function showLogin() {
     user = null;
     entries = [];
+    playerStats = [];
     isAdmin = false;
     isEditor = false;
 
@@ -41,13 +43,28 @@
     if (historyDialog?.open) historyDialog.close();
   }
 
+  function playerLabel(id) {
+    return id === user?.id
+      ? 'Tú'
+      : 'Jugador ' + String(id || '').slice(0, 8);
+  }
+
+  function getEntryStats(entryId, playerId = user?.id) {
+    return playerStats.find(stat =>
+      stat.entry_id === entryId &&
+      stat.player_id === playerId
+    ) || { wins: 0, losses: 0, matches: 0 };
+  }
+
   function createHistoryInterface() {
     if (historyDialog) return;
 
     historyButton = document.createElement('button');
     historyButton.type = 'button';
     historyButton.className = 'primary';
-    historyButton.textContent = '📜 Historial de combates';
+    historyButton.textContent = isAdmin
+      ? '📊 Estadísticas de jugadores'
+      : '📜 Mi historial de combates';
     historyButton.classList.add('hidden');
 
     const intro = appView.querySelector('.intro');
@@ -62,7 +79,7 @@
     historyDialog.id = 'matchHistoryDialog';
 
     historyDialog.style.cssText = `
-      width: min(650px, 92vw);
+      width: min(750px, 92vw);
       max-height: 85vh;
       overflow-y: auto;
       border: 1px solid #66534b;
@@ -73,11 +90,15 @@
     `;
 
     const heading = document.createElement('h2');
-    heading.textContent = 'Historial de combates';
+    heading.id = 'matchHistoryHeading';
+    heading.textContent = isAdmin
+      ? 'Estadísticas de jugadores'
+      : 'Mi historial de combates';
 
     const explanation = document.createElement('p');
-    explanation.textContent =
-      'Puedes corregir el resultado o eliminar un combate registrado por error.';
+    explanation.textContent = isAdmin
+      ? 'Consulta las estadísticas individuales de todos los jugadores. Los identificadores permiten distinguir sus cuentas.'
+      : 'Puedes corregir el resultado o eliminar un combate registrado por error.';
     explanation.style.cssText = 'opacity:.75; line-height:1.5;';
 
     const list = document.createElement('div');
@@ -113,7 +134,7 @@
       return;
     }
 
-    $('playerRank').textContent = data ? data.rank : 'HT5';
+    $('playerRank').textContent = data ? data.rank : 'LT4';
     $('playerElo').textContent = data ? data.elo : '1000';
   }
 
@@ -154,7 +175,11 @@
     createHistoryInterface();
 
     $('addBtn').classList.toggle('hidden', !isAdmin);
-    historyButton.classList.toggle('hidden', !isEditor || isAdmin);
+    historyButton.classList.toggle('hidden', false);
+
+    historyButton.textContent = isAdmin
+      ? '📊 Estadísticas de jugadores'
+      : '📜 Mi historial de combates';
 
     const heading = appView.querySelector('.intro h2');
 
@@ -168,7 +193,7 @@
 
     if (subtitle) {
       subtitle.textContent = isAdmin
-        ? 'Administra criaturas, jefes y rangos de rivales.'
+        ? 'Administra criaturas y consulta las estadísticas de todos los jugadores.'
         : 'Registra tus combates y consulta tu clasificación.';
     }
 
@@ -247,10 +272,29 @@
 
     entries = data || [];
 
+    await loadIndividualStats();
     await renderEntries();
     await loadPlayerRank();
 
     message('statusMessage', '');
+  }
+
+  async function loadIndividualStats() {
+    const { data, error } = await db
+      .from('hunter_player_entry_stats')
+      .select('player_id, entry_id, wins, losses, matches');
+
+    if (error) {
+      playerStats = [];
+      message(
+        'statusMessage',
+        'No se pudieron cargar las estadísticas individuales: ' + error.message,
+        true
+      );
+      return;
+    }
+
+    playerStats = data || [];
   }
 
   async function getImageUrl(path) {
@@ -266,8 +310,8 @@
   async function renderEntries() {
     const query = $('searchInput').value.trim().toLowerCase();
     const filter = $('filterSelect').value;
-   const rankFilter = $('rankFilter').value.trim().toUpperCase();
-const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
+    const rankFilter = $('rankFilter').value.trim().toUpperCase();
+    const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
 
     const filtered = entries.filter(item => {
       const matchesText =
@@ -283,8 +327,7 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
         .trim()
         .toUpperCase();
 
-      const matchesRank =
-  showAllRanks || itemRank === rankFilter;
+      const matchesRank = showAllRanks || itemRank === rankFilter;
 
       return matchesText && matchesType && matchesRank;
     });
@@ -329,10 +372,19 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
       opponentRank.textContent =
         'Rango del rival: ' + (item.opponent_rank || 'LT5');
 
+      const personal = getEntryStats(item.id);
+
       const record = document.createElement('p');
       record.className = 'record';
       record.textContent =
-        `Victorias: ${item.wins} · Derrotas: ${item.losses} · Partidas: ${item.matches ?? 0}`;
+        `Tus estadísticas: ${personal.wins} victorias · ${personal.losses} derrotas · ${personal.matches} partidas`;
+
+      const oldRecord = document.createElement('p');
+      oldRecord.className = 'record';
+      oldRecord.style.opacity = '.65';
+      oldRecord.style.fontSize = '.85em';
+      oldRecord.textContent =
+        `Histórico anterior compartido: ${item.wins || 0} victorias · ${item.losses || 0} derrotas · ${item.matches || 0} partidas`;
 
       const actions = document.createElement('div');
       actions.className = 'card-actions';
@@ -349,8 +401,9 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
         remove.addEventListener('click', () => deleteEntry(item));
 
         actions.append(edit, remove);
+      }
 
-      } else if (isEditor) {
+      if (isAdmin || isEditor) {
         const win = document.createElement('button');
         win.className = 'primary';
         win.textContent = '✓ Victoria';
@@ -370,9 +423,42 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
         description,
         opponentRank,
         record,
-        actions
+        oldRecord
       );
 
+      if (isAdmin) {
+        const otherStats = playerStats.filter(stat =>
+          stat.entry_id === item.id
+        );
+
+        const players = document.createElement('div');
+        players.style.cssText =
+          'border-top:1px solid #66534b; margin-top:10px; padding-top:8px;';
+
+        const playersTitle = document.createElement('p');
+        playersTitle.style.fontWeight = 'bold';
+        playersTitle.textContent = 'Estadísticas de todos los jugadores:';
+        players.append(playersTitle);
+
+        if (!otherStats.length) {
+          const empty = document.createElement('p');
+          empty.textContent = 'Todavía no hay combates individuales.';
+          empty.style.opacity = '.7';
+          players.append(empty);
+        } else {
+          for (const stat of otherStats) {
+            const line = document.createElement('p');
+            line.className = 'record';
+            line.textContent =
+              `${playerLabel(stat.player_id)}: ${stat.wins} victorias · ${stat.losses} derrotas · ${stat.matches} partidas`;
+            players.append(line);
+          }
+        }
+
+        content.append(players);
+      }
+
+      content.append(actions);
       card.append(image, content);
       grid.append(card);
     }
@@ -381,18 +467,22 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
 
     $('totalStat').textContent = entries.length;
 
-    $('winsStat').textContent =
-      entries.reduce((sum, item) => sum + Number(item.wins || 0), 0);
+    const ownTotals = playerStats
+      .filter(stat => stat.player_id === user.id)
+      .reduce((totals, stat) => {
+        totals.wins += Number(stat.wins || 0);
+        totals.losses += Number(stat.losses || 0);
+        totals.matches += Number(stat.matches || 0);
+        return totals;
+      }, { wins: 0, losses: 0, matches: 0 });
 
-    $('lossesStat').textContent =
-      entries.reduce((sum, item) => sum + Number(item.losses || 0), 0);
-
-    $('matchesStat').textContent =
-      entries.reduce((sum, item) => sum + Number(item.matches || 0), 0);
+    $('winsStat').textContent = ownTotals.wins;
+    $('lossesStat').textContent = ownTotals.losses;
+    $('matchesStat').textContent = ownTotals.matches;
   }
 
   async function registerMatch(item, result, button) {
-    if (!isEditor || isAdmin) return;
+    if (!isEditor && !isAdmin) return;
 
     const resultName = result === 'win' ? 'VICTORIA' : 'DERROTA';
 
@@ -419,7 +509,7 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
 
       message(
         'statusMessage',
-        `¡${resultName} registrada! Tu ELO y tu rango se han actualizado.`
+        `¡${resultName} registrada! Tus estadísticas y tu ELO se han actualizado.`
       );
 
     } catch (error) {
@@ -429,16 +519,21 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
   }
 
   async function loadMatchHistory() {
-    if (!user || !isEditor || isAdmin) return;
+    if (!user) return;
 
     const list = $('matchHistoryList');
-    list.innerHTML = 'Cargando historial…';
+    list.innerHTML = 'Cargando…';
 
-    const { data, error } = await db
+    let request = db
       .from('hunter_match_history')
-      .select('id, entry_id, result, opponent_rank, created_at')
-      .eq('player_id', user.id)
+      .select('id, entry_id, player_id, result, opponent_rank, created_at')
       .order('created_at', { ascending: false });
+
+    if (!isAdmin) {
+      request = request.eq('player_id', user.id);
+    }
+
+    const { data, error } = await request;
 
     if (error) {
       list.textContent = 'No se pudo cargar el historial: ' + error.message;
@@ -447,8 +542,68 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
 
     list.innerHTML = '';
 
+    if (isAdmin) {
+      const summaryTitle = document.createElement('h3');
+      summaryTitle.textContent = 'Resumen de jugadores';
+      list.append(summaryTitle);
+
+      const totals = new Map();
+
+      for (const stat of playerStats) {
+        if (!totals.has(stat.player_id)) {
+          totals.set(stat.player_id, {
+            wins: 0,
+            losses: 0,
+            matches: 0
+          });
+        }
+
+        const total = totals.get(stat.player_id);
+        total.wins += Number(stat.wins || 0);
+        total.losses += Number(stat.losses || 0);
+        total.matches += Number(stat.matches || 0);
+      }
+
+      if (!totals.size) {
+        const empty = document.createElement('p');
+        empty.textContent = 'Todavía no hay estadísticas individuales.';
+        list.append(empty);
+      }
+
+      for (const [playerId, total] of totals) {
+        const row = document.createElement('article');
+        row.style.cssText = `
+          border: 1px solid #66534b;
+          border-radius: 10px;
+          padding: 14px;
+          margin: 12px 0;
+        `;
+
+        const name = document.createElement('h3');
+        name.textContent = playerLabel(playerId);
+
+        const details = document.createElement('p');
+        details.textContent =
+          `${total.wins} victorias · ${total.losses} derrotas · ${total.matches} partidas`;
+
+        const identifier = document.createElement('p');
+        identifier.style.cssText = 'font-size:.75em; opacity:.6; overflow-wrap:anywhere;';
+        identifier.textContent = 'ID: ' + playerId;
+
+        row.append(name, details, identifier);
+        list.append(row);
+      }
+
+      const historyTitle = document.createElement('h3');
+      historyTitle.textContent = 'Últimos combates de todos los jugadores';
+      historyTitle.style.marginTop = '25px';
+      list.append(historyTitle);
+    }
+
     if (!data || data.length === 0) {
-      list.textContent = 'Todavía no tienes combates registrados.';
+      const empty = document.createElement('p');
+      empty.textContent = 'Todavía no hay combates registrados.';
+      list.append(empty);
       return;
     }
 
@@ -478,29 +633,34 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
 
       const date = new Date(match.created_at);
       details.textContent =
-        `Rival: ${match.opponent_rank} · ${date.toLocaleString('es-ES')}`;
+        `${isAdmin ? playerLabel(match.player_id) + ' · ' : ''}Rival: ${match.opponent_rank} · ${date.toLocaleString('es-ES')}`;
 
-      const actions = document.createElement('div');
-      actions.className = 'card-actions';
+      row.append(title, result, details);
 
-      const correct = document.createElement('button');
-      correct.className = 'primary';
-      correct.textContent = match.result === 'win'
-        ? 'Cambiar a derrota'
-        : 'Cambiar a victoria';
+      if (match.player_id === user.id) {
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
 
-      correct.addEventListener('click', () => {
-        const newResult = match.result === 'win' ? 'loss' : 'win';
-        correctMatch(match, newResult);
-      });
+        const correct = document.createElement('button');
+        correct.className = 'primary';
+        correct.textContent = match.result === 'win'
+          ? 'Cambiar a derrota'
+          : 'Cambiar a victoria';
 
-      const remove = document.createElement('button');
-      remove.className = 'ghost';
-      remove.textContent = 'Eliminar combate';
-      remove.addEventListener('click', () => deleteMatch(match));
+        correct.addEventListener('click', () => {
+          const newResult = match.result === 'win' ? 'loss' : 'win';
+          correctMatch(match, newResult);
+        });
 
-      actions.append(correct, remove);
-      row.append(title, result, details, actions);
+        const remove = document.createElement('button');
+        remove.className = 'ghost';
+        remove.textContent = 'Eliminar combate';
+        remove.addEventListener('click', () => deleteMatch(match));
+
+        actions.append(correct, remove);
+        row.append(actions);
+      }
+
       list.append(row);
     }
   }
@@ -525,7 +685,7 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
     await loadEntries();
     await loadMatchHistory();
 
-    message('statusMessage', '¡Resultado corregido! Estadísticas y ELO actualizados.');
+    message('statusMessage', '¡Resultado corregido! Tus estadísticas y ELO están actualizados.');
   }
 
   async function deleteMatch(match) {
@@ -547,7 +707,7 @@ const showAllRanks = ['ALL', 'TODOS', ''].includes(rankFilter);
     await loadEntries();
     await loadMatchHistory();
 
-    message('statusMessage', '¡Combate eliminado! Estadísticas y ELO actualizados.');
+    message('statusMessage', '¡Combate eliminado! Tus estadísticas y ELO están actualizados.');
   }
 
   function resetForm() {
