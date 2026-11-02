@@ -295,6 +295,7 @@
 
   function resetForm() {
     $('entryForm').reset();
+    $('entryRank').value = 'LT5';
     $('entryWins').value = 0;
     $('entryLosses').value = 0;
     $('entryMatches').value = 0;
@@ -314,6 +315,7 @@
     $('saveBtn').textContent = 'Guardar cambios';
     $('entryName').value = item.name;
     $('entryDescription').value = item.description || '';
+    $('entryRank').value = item.opponent_rank || 'LT5';
     $('entryBoss').checked = item.is_boss;
     $('entryWins').value = item.wins;
     $('entryLosses').value = item.losses;
@@ -342,6 +344,9 @@
 
     try {
       const payload = {
+  name: $('entryName').value.trim(),
+  description: $('entryDescription').value.trim(),
+  opponent_rank: $('entryRank').value,
         name: $('entryName').value.trim(),
         description: $('entryDescription').value.trim(),
         is_boss: $('entryBoss').checked,
