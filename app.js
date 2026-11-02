@@ -7,11 +7,17 @@
   const dialog = $('entryDialog');
   const bucket = 'hunter-skins';
 
+  const RANKS = [
+    'LT5', 'HT5', 'LT4', 'HT4', 'LT3',
+    'HT3', 'LT2', 'HT2', 'LT1', 'HT1'
+  ];
+
   let db;
   let user;
   let entries = [];
   let editingId = null;
   let isAdmin = false;
+  let isEditor = false;
 
   function message(id, text, error = false) {
     const el = $(id);
@@ -24,13 +30,15 @@
     user = null;
     entries = [];
     isAdmin = false;
+    isEditor = false;
+
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
     $('logoutBtn').classList.add('hidden');
   }
 
   async function loadPlayerRank() {
-    if (!$('playerRank') || !$('playerElo')) return;
+    if (!user) return;
 
     const { data, error } = await db
       .from('hunter_player_ratings')
@@ -39,7 +47,7 @@
       .maybeSingle();
 
     if (error) {
-      message('statusMessage', 'No se pudo cargar el rango: ' + error.message, true);
+      message('statusMessage', 'No se pudo cargar el ELO: ' + error.message, true);
       return;
     }
 
@@ -74,8 +82,9 @@
     }
 
     isAdmin = !!(ownerRows && ownerRows.length);
+    isEditor = !!(editorRows && editorRows.length);
 
-    if (!isAdmin && !(editorRows && editorRows.length)) {
+    if (!isAdmin && !isEditor) {
       message('statusMessage', 'Esta cuenta no tiene acceso al diario.', true);
       return;
     }
@@ -92,8 +101,8 @@
     const subtitle = appView.querySelector('.intro .muted');
     if (subtitle) {
       subtitle.textContent = isAdmin
-        ? 'Administra criaturas, jefes y estadísticas.'
-        : 'Consulta las criaturas y actualiza tus estadísticas.';
+        ? 'Administra criaturas, jefes y rangos de rivales.'
+        : 'Registra tus combates y consulta tu clasificación.';
     }
 
     await loadEntries();
@@ -110,7 +119,12 @@
       cfg.SUPABASE_ANON_KEY
     );
 
-    const { data } = await db.auth.getSession();
+    const { data, error } = await db.auth.getSession();
+
+    if (error) {
+      message('loginMessage', error.message, true);
+      return;
+    }
 
     if (data.session) {
       await enterApp(data.session.user);
@@ -129,6 +143,12 @@
 
   $('loginForm').addEventListener('submit', async event => {
     event.preventDefault();
+
+    if (!db) {
+      message('loginMessage', 'La conexión todavía no está preparada.', true);
+      return;
+    }
+
     message('loginMessage', 'Entrando…');
 
     const { error } = await db.auth.signInWithPassword({
@@ -141,8 +161,8 @@
     }
   });
 
-  $('logoutBtn').addEventListener('click', () => {
-    db.auth.signOut();
+  $('logoutBtn').addEventListener('click', async () => {
+    await db.auth.signOut();
   });
 
   async function loadEntries() {
@@ -159,10 +179,11 @@
     }
 
     entries = data || [];
+
     await renderEntries();
+    await loadPlayerRank();
 
     message('statusMessage', '');
-    await loadPlayerRank();
   }
 
   async function getImageUrl(path) {
@@ -178,17 +199,23 @@
   async function renderEntries() {
     const query = $('searchInput').value.toLowerCase();
     const filter = $('filterSelect').value;
+    const rankFilter = $('rankFilter').value;
 
     const filtered = entries.filter(item => {
       const matchesText =
         (item.name + ' ' + (item.description || ''))
-          .toLowerCase().includes(query);
+          .toLowerCase()
+          .includes(query);
 
       const matchesType =
         filter === 'all' ||
         (filter === 'boss' ? item.is_boss : !item.is_boss);
 
-      return matchesText && matchesType;
+      const matchesRank =
+        rankFilter === 'all' ||
+        (item.opponent_rank || 'LT5') === rankFilter;
+
+      return matchesText && matchesType && matchesRank;
     });
 
     const grid = $('entriesGrid');
@@ -228,7 +255,8 @@
 
       const opponentRank = document.createElement('p');
       opponentRank.className = 'record';
-      opponentRank.textContent = 'Rango del rival: ' + (item.opponent_rank || 'LT5');
+      opponentRank.textContent =
+        'Rango del rival: ' + (item.opponent_rank || 'LT5');
 
       const record = document.createElement('p');
       record.className = 'record';
@@ -250,15 +278,30 @@
         remove.addEventListener('click', () => deleteEntry(item));
 
         actions.append(edit, remove);
-      } else {
-        const update = document.createElement('button');
-        update.className = 'primary';
-        update.textContent = 'Actualizar estadísticas';
-        update.addEventListener('click', () => updateStats(item));
-        actions.append(update);
+
+      } else if (isEditor) {
+        const win = document.createElement('button');
+        win.className = 'primary';
+        win.textContent = '✓ Victoria';
+        win.addEventListener('click', () => registerMatch(item, 'win', win));
+
+        const loss = document.createElement('button');
+        loss.className = 'ghost';
+        loss.textContent = '✕ Derrota';
+        loss.addEventListener('click', () => registerMatch(item, 'loss', loss));
+
+        actions.append(win, loss);
       }
 
-      content.append(tag, title, description, opponentRank, record, actions);
+      content.append(
+        tag,
+        title,
+        description,
+        opponentRank,
+        record,
+        actions
+      );
+
       card.append(image, content);
       grid.append(card);
     }
@@ -266,67 +309,68 @@
     $('emptyState').classList.toggle('hidden', filtered.length > 0);
 
     $('totalStat').textContent = entries.length;
+
     $('winsStat').textContent =
       entries.reduce((sum, item) => sum + Number(item.wins || 0), 0);
+
     $('lossesStat').textContent =
       entries.reduce((sum, item) => sum + Number(item.losses || 0), 0);
+
     $('matchesStat').textContent =
       entries.reduce((sum, item) => sum + Number(item.matches || 0), 0);
   }
 
-  async function updateStats(item) {
-    if (isAdmin) return;
+  async function registerMatch(item, result, button) {
+    if (!isEditor || isAdmin) return;
 
-    const winsInput = prompt('Victorias:', item.wins);
-    if (winsInput === null) return;
+    const resultName = result === 'win' ? 'VICTORIA' : 'DERROTA';
 
-    const lossesInput = prompt('Derrotas:', item.losses);
-    if (lossesInput === null) return;
-
-    const matchesInput = prompt('Partidas:', item.matches ?? 0);
-    if (matchesInput === null) return;
-
-    const wins = Number(winsInput);
-    const losses = Number(lossesInput);
-    const matches = Number(matchesInput);
-
-    const valid = [wins, losses, matches].every(
-      value => Number.isSafeInteger(value) && value >= 0
-    );
-
-    if (!valid) {
-      alert('Introduce números enteros iguales o superiores a cero.');
+    if (!confirm(
+      `¿Confirmas una ${resultName} contra ${item.name} (${item.opponent_rank || 'LT5'})?`
+    )) {
       return;
     }
 
-    message('statusMessage', 'Guardando estadísticas…');
+    const buttons = button.parentElement.querySelectorAll('button');
+    buttons.forEach(btn => btn.disabled = true);
 
-    const { error } = await db.rpc('update_hunter_entry_stats', {
-      p_entry_id: item.id,
-      p_wins: wins,
-      p_losses: losses,
-      p_matches: matches
-    });
+    message('statusMessage', 'Registrando combate y calculando ELO…');
 
-    if (error) {
-      message('statusMessage', 'Error: ' + error.message, true);
-      return;
+    try {
+      const { error } = await db.rpc('record_hunter_match', {
+        p_entry_id: item.id,
+        p_result: result
+      });
+
+      if (error) throw error;
+
+      await loadEntries();
+
+      message(
+        'statusMessage',
+        `¡${resultName} registrada! Tu ELO y tu rango se han actualizado.`
+      );
+
+    } catch (error) {
+      message('statusMessage', 'No se pudo registrar el combate: ' + error.message, true);
+      buttons.forEach(btn => btn.disabled = false);
     }
-
-    await loadEntries();
-    message('statusMessage', 'Estadísticas y rango actualizados correctamente.');
   }
 
   function resetForm() {
     $('entryForm').reset();
+
     $('entryRank').value = 'LT5';
     $('entryWins').value = 0;
     $('entryLosses').value = 0;
     $('entryMatches').value = 0;
     $('entryImage').value = '';
+
     editingId = null;
+
     $('dialogTitle').textContent = 'Añadir entrada';
     $('saveBtn').textContent = 'Guardar entrada';
+
     message('formMessage', '');
   }
 
@@ -334,9 +378,12 @@
     if (!isAdmin) return;
 
     resetForm();
+
     editingId = item.id;
+
     $('dialogTitle').textContent = 'Editar entrada';
     $('saveBtn').textContent = 'Guardar cambios';
+
     $('entryName').value = item.name;
     $('entryDescription').value = item.description || '';
     $('entryRank').value = item.opponent_rank || 'LT5';
@@ -344,19 +391,23 @@
     $('entryWins').value = item.wins;
     $('entryLosses').value = item.losses;
     $('entryMatches').value = item.matches ?? 0;
+
     dialog.showModal();
   }
 
   $('addBtn').addEventListener('click', () => {
     if (!isAdmin) return;
+
     resetForm();
     dialog.showModal();
   });
 
   $('closeDialog').addEventListener('click', () => dialog.close());
   $('cancelBtn').addEventListener('click', () => dialog.close());
+
   $('searchInput').addEventListener('input', renderEntries);
   $('filterSelect').addEventListener('change', renderEntries);
+  $('rankFilter').addEventListener('change', renderEntries);
 
   $('entryForm').addEventListener('submit', async event => {
     event.preventDefault();
@@ -381,7 +432,9 @@
         payload.wins,
         payload.losses,
         payload.matches
-      ].every(value => Number.isSafeInteger(value) && value >= 0);
+      ].every(value =>
+        Number.isSafeInteger(value) && value >= 0
+      );
 
       if (!payload.name) {
         throw new Error('Escribe un nombre.');
@@ -389,6 +442,10 @@
 
       if (!validStats) {
         throw new Error('Comprueba los números introducidos.');
+      }
+
+      if (!RANKS.includes(payload.opponent_rank)) {
+        throw new Error('Selecciona un rango válido.');
       }
 
       const file = $('entryImage').files[0];
@@ -403,8 +460,7 @@
         }
 
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const path =
-          `${user.id}/${crypto.randomUUID()}-${safeName}`;
+        const path = `${user.id}/${crypto.randomUUID()}-${safeName}`;
 
         const { error: uploadError } = await db.storage
           .from(bucket)
@@ -414,6 +470,7 @@
           });
 
         if (uploadError) throw uploadError;
+
         payload.image_url = path;
       }
 
@@ -425,6 +482,7 @@
 
       dialog.close();
       resetForm();
+
       await loadEntries();
 
     } catch (error) {
@@ -436,6 +494,7 @@
 
   async function deleteEntry(item) {
     if (!isAdmin) return;
+
     if (!confirm(`¿Eliminar "${item.name}" del diario?`)) return;
 
     const { error } = await db
@@ -445,12 +504,14 @@
 
     if (error) {
       message('statusMessage', error.message, true);
-    } else {
-      if (item.image_url) {
-        await db.storage.from(bucket).remove([item.image_url]);
-      }
-      await loadEntries();
+      return;
     }
+
+    if (item.image_url) {
+      await db.storage.from(bucket).remove([item.image_url]);
+    }
+
+    await loadEntries();
   }
 
   setup();
